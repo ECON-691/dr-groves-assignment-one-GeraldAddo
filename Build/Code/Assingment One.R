@@ -5,13 +5,22 @@ library()
 library()
 library(ipumsr)
 library(stargazer)
+library(tidycensus)
+library(tidyverse)
+library(ggplot2)
+library(sf)
+
+
+ufo <- read.csv(file = "./Data/scrubbed.csv", header = TRUE, as.is = TRUE, sep = ",")
+st_abb <- read.csv(file = "./Data/st_abb.csv")
 
 #Getting data from IPUMS API
-  #set_ipums_api_key("paste-your-key-here", save = TRUE) #Sets your personal key and saves it
+  set_ipums_api_key('59cba10d8a5da536fc06b59dfd453dddadad4bb98f1d58a11dffe6e9', save = TRUE, overwrite = TRUE) #Sets your personal key and saves it
 
   tst <- get_metadata_nhgis("time_series_tables") #This gives you a list of the time series tables that you can get
 
-#Insert Answer to Question 2 Here####
+tst$geog_levels[[1]]
+  #Insert Answer to Question 2 Here####
 
 #data_names <- c("A00","A57","B57","B18","CL6","B69") #These are the tables we are using
   data_ext<- define_extract_nhgis(
@@ -33,8 +42,8 @@ library(stargazer)
   dat <- read_nhgis(filepath)
 
 #Obtain Census Map Data
-
-  state <- [Insert Code Here]
+##Question 4A##
+  state <- c("53", "41", "16", "30")
   
   cen.stat <- get_acs(geography = "state", 
                       survey = "acs5",
@@ -47,7 +56,7 @@ library(stargazer)
     select(GEOID, NAME, geometry)  %>%
     mutate(STATEFP = GEOID) 
 
- #Basic Clan of data####
+ #Basic Clean of data####
 
     dat2 <- dat %>%
       select(STATEFP, ends_with(c("1970", "1980", "1990", "2000", "2010", "105", "2020", "205"))) %>%
@@ -63,18 +72,20 @@ library(stargazer)
       select(-B18AE)  %>%
       mutate(und18 = rowSums(across(B57AA:B57AD)) / A00AA,
              over65 = rowSums(across(B57AP:B57AR)) / A00AA,
-             white = [Insert Code Here], #White Population
-             black = [Insert Code Here], #Black Population
-             asian = [Insert Code Here], #Asian Population
-             other = [Insert Code Here], #Something other than the above including multi-race
+             white = (B18AA / A00AA), #White Population
+             black = (B18AB / A00AA), #Black Population
+             asian = (B18AD / A00AA), #Asian Population
+             other = (B18AC / A00AA), #Something other than the above including multi-race
              lessHS = (BX3AA + BX3AB + BX3AC + BX3AG + BX3AH + BX3AI) / A00AA,
-             hscol =  [Insert Code Here], #12th Grade and some college
-             ungrd =  [Insert Code Here], #4 years of college or Bach Degree
-             advdg =  [Insert Code Here], #More than 4 years or advanced degree
-             pov =  [Insert Code Here], #Share of population under Poverty Line
-             ln_pop = [Insert Code Here]) %>%  #Natural Log of Population
+             hscol =  (BX3AD + BX3AJ) / A00AA, #12th Grade and some college
+             ungrd =  (BX3AE + BX3AK) / A00AA, #4 years of college or Bach Degree
+             advdg =  (BX3AF + BX3AL) / A00AA, #More than 4 years or advanced degree
+             pov =  (CL6AA / A00AA), #Share of population under Poverty Line
+             ln_pop = log(A00AA)) %>%  #Natural Log of Population
       select(STATEFP, year, und18:ln_pop) 
-
+# The code above was basically cleaning the data and transforming it to a specfic format or type to be used in the analysis. To go further, it selected specific columns and filtered out missing values. It then went on to remove duplicates and selecetd specific variables to be worked with or analysis to be done with#
+  
+  
     ufo.us <- ufo %>%
       filter(country == "us") %>%
       select(-comments) %>%
@@ -89,29 +100,38 @@ library(stargazer)
       filter(!is.na(n)) %>%
       rename("GEOID" = "Code") %>%
       mutate(GEOID = str_pad(as.character(GEOID), width = 2, side = "left", pad="0"),
-             ln_n = log(n))
+      ln_n = log(n))
+#Comment about the code above doing: the code above seeks to filter UFO sightings which occurred in the United States by extracting years and decade information after 1959. Also, it count the number of UFO sightings by States and by decades. It joins the dataframe and filter out missing values, rename column GEOID as Code.Lastly, transforms the number of UFO sightings by taking a log#
 
 #Join the data and Map it
-
-  core <- cen.map %>%
-    [Insert Code Here]  %>%
-    mutate(decade = as.numeric(year)) %>%  
-    [Insert Code Here] 
-    [Insert Code Here]
+   
+      # Step 1: Create 'core' by joining cen.map and dat2
+    core <- cen.map %>%
+      left_join(dat2, by = c("STATEFP")) %>%  
+      mutate(decade = as.numeric(year)) %>%   
+      select(-ends_with(".x"), -ends_with(".y"))  
+    
+    # Step 2: Create 'core.all' by joining 'core' with 'ufo.us'
+    core.all <- core %>%
+      left_join(ufo.us, by = c("GEOID", "decade")) %>%  
+      mutate(n = as.numeric(n)) %>% 
+      select(-c(GEOID, state, year.y, NAME, Abbr)) %>%  
+      filter(!is.na(n))  
+    
 
 #Non-Race Variable Graphic Visualization#####
 
     ggplot(core) +
-      geom_sf(aes(fill = [Insert Code Here])) +
+      geom_sf(aes(fill = pov)) +
       scale_fill_gradient2(low = "white", high = "blue", na.value = NA, 
-                           name = "[Insert Code Here]",
+                           name = "CL6AA",
                            limits = c(0, .5)) +
       theme_bw()+
       theme(axis.ticks = element_blank(),
             axis.text.x = element_blank(),
             axis.text.y = element_blank(),
             legend.position = "bottom") +
-      labs(title = "FIgure One: Percentage of Population [Insert Code Here] Across the Decades") +
+      labs(title = "Figure One: Percentage of Population Below Poverty Line Across the Decades") +
       facet_wrap(~ decade) 
     
     ggsave("./Analysis/Output/Figure1.png", dpi = 600)
@@ -119,16 +139,16 @@ library(stargazer)
 #Race Variable Graphic Visualization
 
     ggplot(core) +
-      geom_sf(aes(fill = [Insert Code Here])) +
+      geom_sf(aes(fill = black)) +
       scale_fill_gradient2(low = "white", high = "blue", na.value = NA, 
-                           name = "[Insert Code Here]",
+                           name = "B18AB",
                            limits = c(0, 1)) +
       theme_bw()+
       theme(axis.ticks = element_blank(),
             axis.text.x = element_blank(),
             axis.text.y = element_blank(),
             legend.position = "bottom") +
-      labs(title = "Figure Two: Percentage of Population [Insert Code Here] Across the Decades") +
+      labs(title = "Figure Two: Percentage of Population Black Across the Decades") +
       facet_wrap(~ decade)
     
     ggsave("./Analysis/Output/Figure2.png", dpi = 600)
@@ -142,18 +162,16 @@ var1 <- c("Percent Under 18", "Percent Over 65", "Percent White", "Percent Black
 
 stargazer(as.data.frame(core), type = "html", out = "./Analysis/Output/Table1.html",
           title = "Table One - Summary Statistics",
-          covariate.labels [Insert Code Here]
+          covariate.labels=var1)
 
 #Regression Analysis
 
-mod1 <- lm([Insert Code Here]
-           data=core)
 
-mod2 <- lm([Insert Code Here]
-           data=core)
+mod1 <- lm(ln_n ~ und18 + over65 + white + black + asian + other + lessHS + hscol + ungrd + advdg + pov + ln_pop, data = core.all)
+mod2 <- lm(ln_n ~ und18 + over65 + white + black + asian + other + lessHS + hscol + ungrd + advdg + pov + ln_pop + factor(decade), data = core.all)
+mod3 <- lm(ln_n ~ und18 + over65 + white + black + asian + other + lessHS + hscol + ungrd + advdg + pov + ln_pop + factor(decade) + factor(State), data = core.all)
 
-mod3 <- lm([Insert Code Here]
-           data=core)
+
 
 var2 <- c("Percent Under 18", "Percent Over 65", "Percent White", "Percent Black",
           "Percent Asian", "Percent Other Race", "Percent with Less than HS", "Highschool Only",
@@ -166,7 +184,7 @@ stargazer(mod1, mod2, mod3,
           type = "html",
           title = "Table Two - Regression Results",
           out = "./Analysis/Output/Table2.html",
-          add.lines=list(c("State F.E." [Insert Code Here] )),
+          add.lines=list(c("State F.E." ,"NO", "NO", "YES")),
           dep.var.labels = "LN(Sightings)",
           covariate.labels=var2)
 
